@@ -1,5 +1,4 @@
 import re
-
 from typing import Match, Pattern
 
 
@@ -9,10 +8,10 @@ def camel_to_snake(
     """Convert name from CamelCase to snake_case.
 
     Args:
-        name (str): A symbol name, such as a class name.
+        name: A symbol name, such as a class name.
 
     Returns:
-        str: Name in camel case.
+        Name in camel case.
     """
 
     def repl(match: Match[str]) -> str:
@@ -22,7 +21,3 @@ def camel_to_snake(
         return f"{lower}_{upper.lower()}"
 
     return _re_snake.sub(repl, name).lower()
-
-
-if __name__ == "__main__":
-    print(camel_to_snake("HelloWorldEvent"))

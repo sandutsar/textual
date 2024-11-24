@@ -1,25 +1,178 @@
-# Welcome to Textual documentation
+---
+hide:
+  - toc
+  - navigation
+---
 
-Textual is framework for rapidly creating _text user interfaces_ (TUIs from here on) with Python.
+!!! tip inline end
 
-A TUI is an application that lives within a terminal, which can have mouse and keyboard support and user interface elements like windows and panels, but is rendered purely with text. They have a number of advantages over GUI applications: they can be launched from the command line, and return to the command line, and they work over ssh.
+    See the navigation links in the header or side-bar.
 
-Creating a TUI can be challenging. It may be easier to create a GUI or web application than it is to build a TUI with traditional techniques. Often projects that could use one or the other never manage to ship either.
+    Click :octicons-three-bars-16: (top left) on mobile.
 
-Textual seeks to lower the difficulty level of building a TUI by borrowing developments from the web world and to a lesser extent desktop applications. The goal is for it to be as easy to develop a TUI for your project as it would be to add a command line interface.
 
-Textual also offers a number of enhancements over traditional TUI applications by taking advantage of improvements to terminal software and the hardware it runs on. Terminals are a far cry from their roots in ancient hardware and dial-up modems, yet much of the software that runs on them hasn't kept pace.
+# Welcome
 
-## Commands
+Welcome to the [Textual](https://github.com/Textualize/textual) framework documentation.
 
-- `mkdocs new [dir-name]` - Create a new project.
-- `mkdocs serve` - Start the live-reloading docs server.
-- `mkdocs build` - Build the documentation site.
-- `mkdocs -h` - Print help message and exit.
+[Get started](./getting_started.md){ .md-button .md-button--primary } or go straight to the [Tutorial](./tutorial.md)
 
-## Project layout
 
-    mkdocs.yml    # The configuration file.
-    docs/
-        index.md  # The documentation homepage.
-        ...       # Other markdown pages, images and other files.
+
+## What is Textual?
+
+Textual is a *Rapid Application Development* framework for Python, built by [Textualize.io](https://www.textualize.io).
+
+
+Build sophisticated user interfaces with a simple Python API. Run your apps in the terminal *or* a [web browser](https://github.com/Textualize/textual-web)!
+
+
+
+<div class="grid cards" markdown>
+
+-   :material-clock-fast:{ .lg .middle } :material-language-python:{. lg .middle } __Rapid development__
+
+    ---
+
+    Uses your existing Python skills to build beautiful user interfaces.
+
+
+-   :material-raspberry-pi:{ .lg .middle } __Low requirements__
+
+    ---
+
+    Run Textual on a single board computer if you want to.
+
+
+
+-   :material-microsoft-windows:{ .lg .middle } :material-apple:{ .lg .middle } :fontawesome-brands-linux:{ .lg .middle } __Cross platform__
+
+    ---
+
+    Textual runs just about everywhere.
+
+
+
+-   :material-network:{ .lg .middle } __Remote__
+
+    ---
+
+    Textual apps can run over SSH.
+
+
+-   :fontawesome-solid-terminal:{ .lg .middle } __CLI Integration__
+
+    ---
+
+    Textual apps can be launched and run from the command prompt.
+
+
+
+-   :material-scale-balance:{ .lg .middle } __Open Source__
+
+    ---
+
+    Textual is licensed under MIT.
+
+
+</div>
+
+---
+
+<div>
+<a href="https://github.com/Textualize/toolong">
+--8<-- "docs/images/screenshots/toolong.svg"
+</a>
+</div>
+
+---
+
+<div>
+<a href="https://github.com/textualize/frogmouth">
+--8<-- "docs/images/screenshots/frogmouth.svg"
+</a>
+</div>
+
+---
+
+<div>
+<a href="https://github.com/bloomberg/memray">
+--8<-- "docs/images/screenshots/memray.svg"
+</a>
+</div>
+
+---
+
+
+<a href="https://github.com/charles-001/dolphie">
+
+![Dolphie](https://www.textualize.io/static/img/dolphie.png)
+
+</a>
+
+
+---
+
+<div>
+<a href="https://harlequin.sh">
+--8<-- "docs/images/screenshots/harlequin.svg"
+</a>
+</div>
+
+
+
+---
+
+
+=== "Stopwatch tutorial"
+
+    <div class="textual-web-demo" data-app="tutorial"></div>
+
+
+=== "stopwatch.py"
+
+    ```python 
+    --8<-- "docs/examples/tutorial/stopwatch.py"
+    ```
+
+=== "stopwatch.tcss"
+
+    ```css
+    --8<-- "docs/examples/tutorial/stopwatch.tcss"
+    ```
+
+
+---
+
+
+=== "Pride example"
+
+    ```{.textual path="examples/pride.py"}
+    ```
+
+=== "pride.py"
+
+    ```py
+    --8<-- "examples/pride.py"
+    ```
+
+
+
+---
+
+=== "Calculator example"
+
+    ```{.textual path="examples/calculator.py" columns=100 lines=41 press="3,.,1,4,5,9,2,wait:400"}
+    ```
+
+=== "calculator.py"
+
+    ```python
+    --8<-- "examples/calculator.py"
+    ```
+
+=== "calculator.tcss"
+
+    ```css
+    --8<-- "examples/calculator.tcss"
+    ```

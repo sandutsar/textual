@@ -1,389 +1,315 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod, abstractmethod
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from itertools import chain
-from operator import itemgetter
-import sys
+from typing import TYPE_CHECKING, ClassVar, Iterable, NamedTuple
 
-from typing import Iterable, Iterator, NamedTuple, TYPE_CHECKING
-from rich import segment
-
-import rich.repr
-from rich.control import Control
-from rich.console import Console, ConsoleOptions, RenderResult, RenderableType
-from rich.segment import Segment, SegmentLines
-from rich.style import Style
-
-from . import log, panic
-from ._loop import loop_last
-from .layout_map import LayoutMap
-from ._profile import timer
-from ._lines import crop_lines
-from ._types import Lines
-
-from .geometry import clamp, Region, Offset, Size
-
-
-PY38 = sys.version_info >= (3, 8)
-
+from textual._spatial_map import SpatialMap
+from textual.canvas import Canvas, Rectangle
+from textual.geometry import Offset, Region, Size, Spacing
+from textual.strip import StripRenderable
 
 if TYPE_CHECKING:
-    from .widget import Widget
-    from .view import View
+    from typing_extensions import TypeAlias
+
+    from textual.widget import Widget
+
+ArrangeResult: TypeAlias = "list[WidgetPlacement]"
 
 
-class NoWidget(Exception):
-    pass
+@dataclass
+class DockArrangeResult:
+    """Result of [Layout.arrange][textual.layout.Layout.arrange]."""
 
+    placements: list[WidgetPlacement]
+    """A `WidgetPlacement` for every widget to describe its location on screen."""
+    widgets: set[Widget]
+    """A set of widgets in the arrangement."""
+    scroll_spacing: Spacing
+    """Spacing to reduce scrollable area."""
 
-class OrderedRegion(NamedTuple):
-    region: Region
-    order: tuple[int, int]
+    _spatial_map: SpatialMap[WidgetPlacement] | None = None
+    """A Spatial map to query widget placements."""
 
+    @property
+    def spatial_map(self) -> SpatialMap[WidgetPlacement]:
+        """A lazy-calculated spatial map."""
+        if self._spatial_map is None:
+            self._spatial_map = SpatialMap()
+            self._spatial_map.insert(
+                (
+                    placement.region.grow(placement.margin),
+                    placement.offset,
+                    placement.fixed,
+                    placement.overlay,
+                    placement,
+                )
+                for placement in self.placements
+            )
 
-class ReflowResult(NamedTuple):
-    """The result of a reflow operation. Describes the chances to widgets."""
+        return self._spatial_map
 
-    hidden: set[Widget]
-    shown: set[Widget]
-    resized: set[Widget]
+    @property
+    def total_region(self) -> Region:
+        """The total area occupied by the arrangement.
+
+        Returns:
+            A Region.
+        """
+        _top, right, bottom, _left = self.scroll_spacing
+        return self.spatial_map.total_region.grow((0, right, bottom, 0))
+
+    def get_visible_placements(self, region: Region) -> list[WidgetPlacement]:
+        """Get the placements visible within the given region.
+
+        Args:
+            region: A region.
+
+        Returns:
+            Set of placements.
+        """
+        if self.total_region in region:
+            # Short circuit for when we want all the placements
+            return self.placements
+        visible_placements = self.spatial_map.get_values_in_region(region)
+        overlaps = region.overlaps
+        culled_placements = [
+            placement
+            for placement in visible_placements
+            if placement.fixed or overlaps(placement.region + placement.offset)
+        ]
+        return culled_placements
 
 
 class WidgetPlacement(NamedTuple):
+    """The position, size, and relative order of a widget within its parent."""
 
     region: Region
-    widget: Widget | None = None
-    order: tuple[int, ...] = ()
+    offset: Offset
+    margin: Spacing
+    widget: Widget
+    order: int = 0
+    fixed: bool = False
+    overlay: bool = False
+    absolute: bool = False
 
+    @property
+    def reset_origin(self) -> WidgetPlacement:
+        """Reset the origin in the placement (moves it to (0, 0))."""
+        return self._replace(region=self.region.reset_offset)
 
-@rich.repr.auto
-class LayoutUpdate:
-    def __init__(self, lines: Lines, region: Region) -> None:
-        self.lines = lines
-        self.region = region
+    @classmethod
+    def translate(
+        cls, placements: list[WidgetPlacement], translate_offset: Offset
+    ) -> list[WidgetPlacement]:
+        """Move all non-absolute placements by a given offset.
 
-    def __rich_console__(
-        self, console: Console, options: ConsoleOptions
-    ) -> RenderResult:
-        yield Control.home().segment
-        x = self.region.x
-        new_line = Segment.line()
-        move_to = Control.move_to
-        for last, (y, line) in loop_last(enumerate(self.lines, self.region.y)):
-            yield move_to(x, y).segment
-            yield from line
-            if not last:
-                yield new_line
+        Args:
+            placements: List of placements.
+            offset: Offset to add to placements.
 
-    def __rich_repr__(self) -> rich.repr.Result:
-        x, y, width, height = self.region
-        yield "x", x
-        yield "y", y
-        yield "width", width
-        yield "height", height
+        Returns:
+            Placements with adjusted region, or same instance if offset is null.
+        """
+        if translate_offset:
+            return [
+                cls(
+                    (
+                        region + translate_offset
+                        if layout_widget.absolute_offset is None
+                        else region
+                    ),
+                    offset,
+                    margin,
+                    layout_widget,
+                    order,
+                    fixed,
+                    overlay,
+                    absolute,
+                )
+                for region, offset, margin, layout_widget, order, fixed, overlay, absolute in placements
+            ]
+        return placements
+
+    @classmethod
+    def apply_absolute(cls, placements: list[WidgetPlacement]) -> None:
+        """Applies absolute offsets (in place).
+
+        Args:
+            placements: A list of placements.
+        """
+        for index, placement in enumerate(placements):
+            if placement.absolute:
+                placements[index] = placement.reset_origin
+
+    @classmethod
+    def get_bounds(cls, placements: Iterable[WidgetPlacement]) -> Region:
+        """Get a bounding region around all placements.
+
+        Args:
+            placements: A number of placements.
+
+        Returns:
+            An optimal binding box around all placements.
+        """
+        bounding_region = Region.from_union(
+            [placement.region.grow(placement.margin) for placement in placements]
+        )
+        return bounding_region
+
+    def process_offset(
+        self, constrain_region: Region, absolute_offset: Offset
+    ) -> WidgetPlacement:
+        """Apply any absolute offset or constrain rules to the placement.
+
+        Args:
+            constrain_region: The container region when applying constrain rules.
+            absolute_offset: Default absolute offset that moves widget in to screen coordinates.
+
+        Returns:
+            Processes placement, may be the same instance.
+        """
+        widget = self.widget
+        styles = widget.styles
+        if not widget.absolute_offset and not styles.has_any_rules(
+            "constrain_x", "constrain_y"
+        ):
+            # Bail early if there is nothing to do
+            return self
+        region = self.region
+        margin = self.margin
+        if widget.absolute_offset is not None:
+            region = region.at_offset(
+                widget.absolute_offset + margin.top_left - absolute_offset
+            )
+
+        region = region.translate(self.offset).constrain(
+            styles.constrain_x,
+            styles.constrain_y,
+            self.margin,
+            constrain_region - absolute_offset,
+        )
+
+        offset = region.offset - self.region.offset
+        if offset != self.offset:
+            region, _offset, margin, widget, order, fixed, overlay, absolute = self
+            placement = WidgetPlacement(
+                region, offset, margin, widget, order, fixed, overlay, absolute
+            )
+            return placement
+        return self
 
 
 class Layout(ABC):
-    """Responsible for arranging Widgets in a view and rendering them."""
+    """Base class of the object responsible for arranging Widgets within a container."""
 
-    def __init__(self) -> None:
-        self._layout_map: LayoutMap | None = None
-        self.width = 0
-        self.height = 0
-        self.regions: dict[Widget, tuple[Region, Region]] = {}
-        self._cuts: list[list[int]] | None = None
-        self._require_update: bool = True
-        self.background = ""
+    name: ClassVar[str] = ""
 
-    def check_update(self) -> bool:
-        return self._require_update
-
-    def require_update(self) -> None:
-        self._require_update = True
-        self.reset()
-        self._layout_map = None
-
-    def reset_update(self) -> None:
-        self._require_update = False
-
-    def reset(self) -> None:
-        self._cuts = None
-
-    def reflow(self, view: View, size: Size) -> ReflowResult:
-        self.reset()
-
-        self.width = size.width
-        self.height = size.height
-
-        map = LayoutMap(size)
-        map.add_widget(view, size.region, (), size.region)
-
-        self._require_update = False
-
-        old_widgets = set() if self.map is None else set(self.map.keys())
-        new_widgets = set(map.keys())
-        # Newly visible widgets
-        shown_widgets = new_widgets - old_widgets
-        # Newly hidden widgets
-        hidden_widgets = old_widgets - new_widgets
-
-        self._layout_map = map
-
-        # Copy renders if the size hasn't changed
-        new_renders = {
-            widget: (region, clip) for widget, (region, _order, clip) in map.items()
-        }
-        self.regions = new_renders
-
-        # Widgets with changed size
-        resized_widgets = {
-            widget
-            for widget, (region, *_) in map.items()
-            if widget in old_widgets and widget.size != region.size
-        }
-
-        return ReflowResult(
-            hidden=hidden_widgets, shown=shown_widgets, resized=resized_widgets
-        )
+    def __repr__(self) -> str:
+        return f"<{self.name}>"
 
     @abstractmethod
-    def get_widgets(self) -> Iterable[Widget]:
-        ...
-
-    @abstractmethod
-    def arrange(self, size: Size, scroll: Offset) -> Iterable[WidgetPlacement]:
+    def arrange(
+        self, parent: Widget, children: list[Widget], size: Size
+    ) -> ArrangeResult:
         """Generate a layout map that defines where on the screen the widgets will be drawn.
 
         Args:
-            console (Console): Console instance.
-            size (Dimensions): Size of container.
-            viewport (Region): Screen relative viewport.
+            parent: Parent widget.
+            size: Size of container.
 
         Returns:
-            Iterable[WidgetPlacement]: An iterable of widget location
+            An iterable of widget location
         """
 
-    async def mount_all(self, view: "View") -> None:
-        await view.mount(*self.get_widgets())
-
-    @property
-    def map(self) -> LayoutMap | None:
-        return self._layout_map
-
-    def __iter__(self) -> Iterator[tuple[Widget, Region, Region]]:
-        if self.map is not None:
-            layers = sorted(
-                self.map.widgets.items(), key=lambda item: item[1].order, reverse=True
-            )
-            for widget, (region, order, clip) in layers:
-                yield widget, region.intersection(clip), region
-
-    def get_offset(self, widget: Widget) -> Offset:
-        """Get the offset of a widget."""
-        try:
-            return self.map[widget].region.origin
-        except KeyError:
-            raise NoWidget("Widget is not in layout")
-
-    def get_widget_at(self, x: int, y: int) -> tuple[Widget, Region]:
-        """Get the widget under the given point or None."""
-        for widget, cropped_region, region in self:
-            if widget.is_visual and cropped_region.contains(x, y):
-                return widget, region
-        raise NoWidget(f"No widget under screen coordinate ({x}, {y})")
-
-    def get_style_at(self, x: int, y: int) -> Style:
-        try:
-            widget, region = self.get_widget_at(x, y)
-        except NoWidget:
-            return Style.null()
-        if widget not in self.regions:
-            return Style.null()
-        lines = widget._get_lines()
-        x -= region.x
-        y -= region.y
-        line = lines[y]
-        end = 0
-        for segment in line:
-            end += segment.cell_length
-            if x < end:
-                return segment.style or Style.null()
-        return Style.null()
-
-    def get_widget_region(self, widget: Widget) -> Region:
-        try:
-            region, *_ = self.map[widget]
-        except KeyError:
-            raise NoWidget("Widget is not in layout")
-        else:
-            return region
-
-    @property
-    def cuts(self) -> list[list[int]]:
-        """Get vertical cuts.
-
-        A cut is every point on a line where a widget starts or ends.
-
-        Returns:
-            list[list[int]]: A list of cuts for every line.
-        """
-        if self._cuts is not None:
-            return self._cuts
-        width = self.width
-        height = self.height
-        screen_region = Region(0, 0, width, height)
-        cuts_sets = [{0, width} for _ in range(height)]
-
-        if self.map is not None:
-            for region, order, clip in self.map.values():
-                region = region.intersection(clip)
-                if region and (region in screen_region):
-                    region_cuts = region.x_extents
-                    for y in region.y_range:
-                        cuts_sets[y].update(region_cuts)
-
-        # Sort the cuts for each line
-        self._cuts = [sorted(cut_set) for cut_set in cuts_sets]
-        return self._cuts
-
-    def _get_renders(self, console: Console) -> Iterable[tuple[Region, Region, Lines]]:
-        _rich_traceback_guard = True
-        layout_map = self.map
-
-        if layout_map:
-            widget_regions = sorted(
-                (
-                    (widget, region, order, clip)
-                    for widget, (region, order, clip) in layout_map.items()
-                ),
-                key=itemgetter(2),
-                reverse=True,
-            )
-        else:
-            widget_regions = []
-
-        for widget, region, _order, clip in widget_regions:
-
-            if not widget.is_visual:
-                continue
-
-            lines = widget._get_lines()
-
-            if region in clip:
-                yield region, clip, lines
-            elif clip.overlaps(region):
-                new_region = region.intersection(clip)
-                delta_x = new_region.x - region.x
-                delta_y = new_region.y - region.y
-                splits = [delta_x, delta_x + new_region.width]
-                lines = lines[delta_y : delta_y + new_region.height]
-                divide = Segment.divide
-                lines = [list(divide(line, splits))[1] for line in lines]
-                yield region, clip, lines
-
-    @classmethod
-    def _assemble_chops(
-        cls, chops: list[dict[int, list[Segment] | None]]
-    ) -> Iterable[list[Segment]]:
-
-        from_iterable = chain.from_iterable
-        for bucket in chops:
-            yield from_iterable(
-                line for _, line in sorted(bucket.items()) if line is not None
-            )
-
-    def render(
-        self,
-        console: Console,
-        *,
-        crop: Region = None,
-    ) -> SegmentLines:
-        """Render a layout.
+    def get_content_width(self, widget: Widget, container: Size, viewport: Size) -> int:
+        """Get the optimal content width by arranging children.
 
         Args:
-            console (Console): Console instance.
-            clip (Optional[Region]): Region to clip to.
+            widget: The container widget.
+            container: The container size.
+            viewport: The viewport size.
 
         Returns:
-            SegmentLines: A renderable
+            Width of the content.
         """
-        width = self.width
-        height = self.height
-        screen = Region(0, 0, width, height)
-
-        crop_region = crop.intersection(screen) if crop else screen
-
-        _Segment = Segment
-        divide = _Segment.divide
-
-        # Maps each cut on to a list of segments
-        cuts = self.cuts
-        chops: list[dict[int, list[Segment] | None]] = [
-            {cut: None for cut in cut_set} for cut_set in cuts
-        ]
-
-        # TODO: Provide an option to update the background
-        background_style = console.get_style(self.background)
-        background_render = [
-            [_Segment(" " * width, background_style)] for _ in range(height)
-        ]
-        # Go through all the renders in reverse order and fill buckets with no render
-        renders = list(self._get_renders(console))
-
-        for region, clip, lines in chain(
-            renders, [(screen, screen, background_render)]
-        ):
-            render_region = region.intersection(clip)
-            for y, line in zip(render_region.y_range, lines):
-
-                first_cut, last_cut = render_region.x_extents
-                final_cuts = [cut for cut in cuts[y] if (last_cut >= cut >= first_cut)]
-
-                if len(final_cuts) == 2:
-                    cut_segments = [line]
-                else:
-                    render_x = render_region.x
-                    relative_cuts = [cut - render_x for cut in final_cuts]
-                    _, *cut_segments = divide(line, relative_cuts)
-                for cut, segments in zip(final_cuts, cut_segments):
-                    if chops[y][cut] is None:
-                        chops[y][cut] = segments
-
-        # Assemble the cut renders in to lists of segments
-        crop_x, crop_y, crop_x2, crop_y2 = crop_region.corners
-        output_lines = self._assemble_chops(chops[crop_y:crop_y2])
-
-        def width_view(line: list[Segment]) -> list[Segment]:
-            if line:
-                div_lines = list(divide(line, [crop_x, crop_x2]))
-                line = div_lines[1] if len(div_lines) > 1 else div_lines[0]
-            return line
-
-        if crop is not None and (crop_x, crop_x2) != (0, self.width):
-            render_lines = [width_view(line) for line in output_lines]
+        if not widget._nodes:
+            width = 0
         else:
-            render_lines = list(output_lines)
+            arrangement = widget._arrange(
+                Size(0 if widget.shrink else container.width, 0)
+            )
+            width = arrangement.total_region.right
+        return width
 
-        return SegmentLines(render_lines, new_lines=True)
+    def get_content_height(
+        self, widget: Widget, container: Size, viewport: Size, width: int
+    ) -> int:
+        """Get the content height.
 
-    def __rich_console__(
-        self, console: Console, options: ConsoleOptions
-    ) -> RenderResult:
-        yield self.render(console)
+        Args:
+            widget: The container widget.
+            container: The container size.
+            viewport: The viewport.
+            width: The content width.
 
-    def update_widget(self, console: Console, widget: Widget) -> LayoutUpdate | None:
-        if widget not in self.regions:
-            return None
+        Returns:
+            Content height (in lines).
+        """
+        if not widget._nodes:
+            height = 0
+        else:
+            # Use a height of zero to ignore relative heights
+            styles_height = widget.styles.height
+            if widget._parent and len(widget._nodes) == 1:
+                # If it is an only child with height auto we want it to expand
+                height = (
+                    container.height
+                    if styles_height is not None and styles_height.is_auto
+                    else 0
+                )
+            else:
+                height = 0
+            arrangement = widget._arrange(Size(width, height))
+            height = arrangement.total_region.bottom
 
-        region, clip = self.regions[widget]
+        return height
 
-        if not region.size:
-            return None
+    def render_keyline(self, container: Widget) -> StripRenderable:
+        """Render keylines around all widgets.
 
-        widget.clear_render_cache()
+        Args:
+            container: The container widget.
 
-        update_region = region.intersection(clip)
-        update_lines = self.render(console, crop=update_region).lines
-        update = LayoutUpdate(update_lines, update_region)
-        return update
+        Returns:
+            A renderable to draw the keylines.
+        """
+        width, height = container.outer_size
+        canvas = Canvas(width, height)
+
+        line_style, keyline_color = container.styles.keyline
+        if keyline_color:
+            keyline_color = container.background_colors[0] + keyline_color
+
+        container_offset = container.content_region.offset
+
+        def get_rectangle(region: Region) -> Rectangle:
+            """Get a canvas Rectangle that wraps a region.
+
+            Args:
+                region: Widget region.
+
+            Returns:
+                A Rectangle that encloses the widget.
+            """
+            offset = region.offset - container_offset - (1, 1)
+            width, height = region.size
+            return Rectangle(offset, width + 2, height + 2, keyline_color, line_style)
+
+        primitives = [
+            get_rectangle(widget.region)
+            for widget in container.children
+            if widget.visible
+        ]
+        canvas_renderable = canvas.render(primitives, container.rich_style)
+        return canvas_renderable

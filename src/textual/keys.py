@@ -1,10 +1,12 @@
-from dataclasses import dataclass
+from __future__ import annotations
+
+import unicodedata
 from enum import Enum
+from functools import lru_cache
+
 
 # Adapted from prompt toolkit https://github.com/prompt-toolkit/python-prompt-toolkit/blob/master/prompt_toolkit/keys.py
-
-
-class Keys(str, Enum):
+class Keys(str, Enum):  # type: ignore[no-redef]
     """
     List of keys for use in key bindings.
 
@@ -12,7 +14,9 @@ class Keys(str, Enum):
     strings.
     """
 
-    value: str
+    @property
+    def value(self) -> str:
+        return super().value
 
     Escape = "escape"  # Also Control-[
     ShiftEscape = "shift+escape"
@@ -69,10 +73,10 @@ class Keys(str, Enum):
     ControlShift9 = "ctrl+shift+9"
     ControlShift0 = "ctrl+shift+0"
 
-    ControlBackslash = "ctrl+\\"
-    ControlSquareClose = "ctrl+]"
-    ControlCircumflex = "ctrl+^"
-    ControlUnderscore = "ctrl+_"
+    ControlBackslash = "ctrl+backslash"
+    ControlSquareClose = "ctrl+right_square_bracket"
+    ControlCircumflex = "ctrl+circumflex_accent"
+    ControlUnderscore = "ctrl+underscore"
 
     Left = "left"
     Right = "right"
@@ -177,11 +181,6 @@ class Keys(str, Enum):
     ScrollUp = "<scroll-up>"
     ScrollDown = "<scroll-down>"
 
-    CPRResponse = "<cursor-position-response>"
-    Vt100MouseEvent = "<vt100-mouse-event>"
-    WindowsMouseEvent = "<windowshift+mouse-event>"
-    BracketedPaste = "<bracketed-paste>"
-
     # For internal use: key which is ignored.
     # (The key binding for this key should not do anything.)
     Ignore = "<ignore>"
@@ -189,6 +188,7 @@ class Keys(str, Enum):
     # Some 'Key' aliases (for backwardshift+compatibility).
     ControlSpace = "ctrl-at"
     Tab = "tab"
+    Space = "space"
     Enter = "enter"
     Backspace = "backspace"
 
@@ -200,8 +200,149 @@ class Keys(str, Enum):
     ShiftControlEnd = ControlShiftEnd
 
 
-@dataclass
-class Binding:
-    action: str
-    description: str
-    show: bool = False
+# Unicode db contains some obscure names
+# This mapping replaces them with more common terms
+KEY_NAME_REPLACEMENTS = {
+    "solidus": "slash",
+    "reverse_solidus": "backslash",
+    "commercial_at": "at",
+    "hyphen_minus": "minus",
+    "plus_sign": "plus",
+    "low_line": "underscore",
+}
+REPLACED_KEYS = {value: key for key, value in KEY_NAME_REPLACEMENTS.items()}
+
+# Convert the friendly versions of character key Unicode names
+# back to their original names.
+# This is because we go from Unicode to friendly by replacing spaces and dashes
+# with underscores, which cannot be undone by replacing underscores with spaces/dashes.
+KEY_TO_UNICODE_NAME = {
+    "exclamation_mark": "EXCLAMATION MARK",
+    "quotation_mark": "QUOTATION MARK",
+    "number_sign": "NUMBER SIGN",
+    "dollar_sign": "DOLLAR SIGN",
+    "percent_sign": "PERCENT SIGN",
+    "left_parenthesis": "LEFT PARENTHESIS",
+    "right_parenthesis": "RIGHT PARENTHESIS",
+    "plus_sign": "PLUS SIGN",
+    "hyphen_minus": "HYPHEN-MINUS",
+    "full_stop": "FULL STOP",
+    "less_than_sign": "LESS-THAN SIGN",
+    "equals_sign": "EQUALS SIGN",
+    "greater_than_sign": "GREATER-THAN SIGN",
+    "question_mark": "QUESTION MARK",
+    "commercial_at": "COMMERCIAL AT",
+    "left_square_bracket": "LEFT SQUARE BRACKET",
+    "reverse_solidus": "REVERSE SOLIDUS",
+    "right_square_bracket": "RIGHT SQUARE BRACKET",
+    "circumflex_accent": "CIRCUMFLEX ACCENT",
+    "low_line": "LOW LINE",
+    "grave_accent": "GRAVE ACCENT",
+    "left_curly_bracket": "LEFT CURLY BRACKET",
+    "vertical_line": "VERTICAL LINE",
+    "right_curly_bracket": "RIGHT CURLY BRACKET",
+}
+
+# Some keys have aliases. For example, if you press `ctrl+m` on your keyboard,
+# it's treated the same way as if you press `enter`. Key handlers `key_ctrl_m` and
+# `key_enter` are both valid in this case.
+KEY_ALIASES = {
+    "tab": ["ctrl+i"],
+    "enter": ["ctrl+m"],
+    "escape": ["ctrl+left_square_brace"],
+    "ctrl+at": ["ctrl+space"],
+    "ctrl+j": ["newline"],
+}
+
+KEY_DISPLAY_ALIASES = {
+    "up": "↑",
+    "down": "↓",
+    "left": "←",
+    "right": "→",
+    "backspace": "⌫",
+    "escape": "esc",
+    "enter": "⏎",
+    "minus": "-",
+    "space": "space",
+    "pagedown": "pgdn",
+    "pageup": "pgup",
+    "delete": "del",
+}
+
+
+def _get_unicode_name_from_key(key: str) -> str:
+    """Get the best guess for the Unicode name of the char corresponding to the key.
+
+    This function can be seen as a pseudo-inverse of the function `_character_to_key`.
+    """
+    return KEY_TO_UNICODE_NAME.get(key, key)
+
+
+def _get_key_aliases(key: str) -> list[str]:
+    """Return all aliases for the given key, including the key itself"""
+    return [key] + KEY_ALIASES.get(key, [])
+
+
+@lru_cache(1024)
+def format_key(key: str) -> str:
+    """Given a key (i.e. the `key` string argument to Binding __init__),
+    return the value that should be displayed in the app when referring
+    to this key (e.g. in the Footer widget)."""
+
+    display_alias = KEY_DISPLAY_ALIASES.get(key)
+    if display_alias:
+        return display_alias
+
+    original_key = REPLACED_KEYS.get(key, key)
+    tentative_unicode_name = _get_unicode_name_from_key(original_key)
+    try:
+        unicode_name = unicodedata.lookup(tentative_unicode_name)
+    except KeyError:
+        pass
+    else:
+        if unicode_name.isprintable():
+            return unicode_name
+    return tentative_unicode_name
+
+
+@lru_cache(1024)
+def key_to_character(key: str) -> str | None:
+    """Given a key identifier, return the character associated with it.
+
+    Args:
+        key: The key identifier.
+
+    Returns:
+        A key if one could be found, otherwise `None`.
+    """
+    _, separator, key = key.rpartition("+")
+    if separator:
+        # If there is a separator, then it means a modifier (other than shift) is applied.
+        # Keys with modifiers, don't come from printable keys.
+        return None
+    if len(key) == 1:
+        # Key identifiers with a length of one, are also characters.
+        return key
+    try:
+        return unicodedata.lookup(KEY_TO_UNICODE_NAME[key])
+    except KeyError:
+        pass
+    try:
+        return unicodedata.lookup(key.replace("_", " ").upper())
+    except KeyError:
+        pass
+    # Return None if we couldn't identify the key.
+    return None
+
+
+def _character_to_key(character: str) -> str:
+    """Convert a single character to a key value.
+
+    This transformation can be undone by the function `_get_unicode_name_from_key`.
+    """
+    if not character.isalnum():
+        key = unicodedata.name(character).lower().replace("-", "_").replace(" ", "_")
+    else:
+        key = character
+    key = KEY_NAME_REPLACEMENTS.get(key, key)
+    return key

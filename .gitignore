@@ -2,6 +2,7 @@
 .pytype
 .DS_Store
 .vscode
+.idea
 mypy_report
 docs/build
 docs/source/_build
@@ -109,6 +110,21 @@ venv.bak/
 
 # mkdocs documentation
 /site
+/docs-offline
+/mkdocs-nav-online.yml
+/mkdocs-nav-offline.yml
 
 # mypy
 .mypy_cache/
+
+# Snapshot testing report output (default location)
+snapshot_report.html
+
+# Sandbox folder - convenient place for us to develop small test apps without leaving the repo
+sandbox/
+
+# Cache of screenshots used in the docs
+.screenshot_cache
+
+# Used by mkdocs-material social plugin
+.cache

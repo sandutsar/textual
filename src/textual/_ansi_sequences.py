@@ -1,10 +1,24 @@
-from typing import Dict, Tuple
+from __future__ import annotations
 
-from .keys import Keys
+from typing import Mapping, Tuple
+
+from typing_extensions import Final
+
+from textual.keys import Keys
+
+
+class IgnoredSequence:
+    """Class used to mark that a sequence should be ignored."""
+
+
+IGNORE_SEQUENCE: Final[IgnoredSequence] = IgnoredSequence()
+"""Constant to indicate that a sequence should be ignored."""
+
 
 # Mapping of vt100 escape codes to Keys.
-ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
+ANSI_SEQUENCES_KEYS: Mapping[str, Tuple[Keys, ...] | str | IgnoredSequence] = {
     # Control keys.
+    " ": (Keys.Space,),
     "\r": (Keys.Enter,),
     "\x00": (Keys.ControlAt,),  # Control-At (Also for Ctrl-Space)
     "\x01": (Keys.ControlA,),  # Control-A (home)
@@ -14,8 +28,8 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x05": (Keys.ControlE,),  # Control-E (end)
     "\x06": (Keys.ControlF,),  # Control-F (cursor forward)
     "\x07": (Keys.ControlG,),  # Control-G
-    "\x08": (Keys.ControlH,),  # Control-H (8) (Identical to '\b')
-    "\x09": (Keys.ControlI,),  # Control-I (9) (Identical to '\t')
+    "\x08": (Keys.Backspace,),  # Control-H (8) (Identical to '\b')
+    "\x09": (Keys.Tab,),  # Control-I (9) (Identical to '\t')
     "\x0a": (Keys.ControlJ,),  # Control-J (10) (Identical to '\n')
     "\x0b": (Keys.ControlK,),  # Control-K (delete until end of line; vertical tab)
     "\x0c": (Keys.ControlL,),  # Control-L (clear; form feed)
@@ -34,6 +48,9 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x19": (Keys.ControlY,),  # Control-Y (25)
     "\x1a": (Keys.ControlZ,),  # Control-Z
     "\x1b": (Keys.Escape,),  # Also Control-[
+    "\x1b\x1b": (
+        Keys.Escape,
+    ),  # Windows issues esc esc for a single press of escape key
     "\x9b": (Keys.ShiftEscape,),
     "\x1c": (Keys.ControlBackslash,),  # Both Control-\ (also Ctrl-| )
     "\x1d": (Keys.ControlSquareClose,),  # Control-]
@@ -46,8 +63,8 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     # handle backspace and control-h individually for the few terminals that
     # support it. (Most terminals send ControlH when backspace is pressed.)
     # See: http://www.ibb.net/~anne/keyboard.html
-    "\x7f": (Keys.ControlH,),
-    # --
+    "\x7f": (Keys.Backspace,),
+    "\x1b\x7f": (Keys.ControlW,),
     # Various
     "\x1b[1~": (Keys.Home,),  # tmux
     "\x1b[2~": (Keys.Insert,),
@@ -94,7 +111,9 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     # Xterm
     "\x1b[1;2P": (Keys.F13,),
     "\x1b[1;2Q": (Keys.F14,),
-    # '\x1b[1;2R': Keys.F15,  # Conflicts with CPR response.
+    "\x1b[1;2R": (
+        Keys.F15,
+    ),  # Conflicts with CPR response; enabled after https://github.com/Textualize/textual/issues/3440.
     "\x1b[1;2S": (Keys.F16,),
     "\x1b[15;2~": (Keys.F17,),
     "\x1b[17;2~": (Keys.F18,),
@@ -104,11 +123,15 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x1b[21;2~": (Keys.F22,),
     "\x1b[23;2~": (Keys.F23,),
     "\x1b[24;2~": (Keys.F24,),
+    "\x1b[23$": (Keys.F23,),  # rxvt
+    "\x1b[24$": (Keys.F24,),  # rxvt
     # --
     # Control + function keys.
     "\x1b[1;5P": (Keys.ControlF1,),
     "\x1b[1;5Q": (Keys.ControlF2,),
-    # "\x1b[1;5R": Keys.ControlF3,  # Conflicts with CPR response.
+    "\x1b[1;5R": (
+        Keys.ControlF3,
+    ),  # Conflicts with CPR response; enabled after https://github.com/Textualize/textual/issues/3440.
     "\x1b[1;5S": (Keys.ControlF4,),
     "\x1b[15;5~": (Keys.ControlF5,),
     "\x1b[17;5~": (Keys.ControlF6,),
@@ -120,7 +143,9 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x1b[24;5~": (Keys.ControlF12,),
     "\x1b[1;6P": (Keys.ControlF13,),
     "\x1b[1;6Q": (Keys.ControlF14,),
-    # "\x1b[1;6R": Keys.ControlF15,  # Conflicts with CPR response.
+    "\x1b[1;6R": (
+        Keys.ControlF15,
+    ),  # Conflicts with CPR response; enabled after https://github.com/Textualize/textual/issues/3440.
     "\x1b[1;6S": (Keys.ControlF16,),
     "\x1b[15;6~": (Keys.ControlF17,),
     "\x1b[17;6~": (Keys.ControlF18,),
@@ -130,19 +155,37 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x1b[21;6~": (Keys.ControlF22,),
     "\x1b[23;6~": (Keys.ControlF23,),
     "\x1b[24;6~": (Keys.ControlF24,),
+    # rxvt-unicode control function keys:
+    "\x1b[11^": (Keys.ControlF1,),
+    "\x1b[12^": (Keys.ControlF2,),
+    "\x1b[13^": (Keys.ControlF3,),
+    "\x1b[14^": (Keys.ControlF4,),
+    "\x1b[15^": (Keys.ControlF5,),
+    "\x1b[17^": (Keys.ControlF6,),
+    "\x1b[18^": (Keys.ControlF7,),
+    "\x1b[19^": (Keys.ControlF8,),
+    "\x1b[20^": (Keys.ControlF9,),
+    "\x1b[21^": (Keys.ControlF10,),
+    "\x1b[23^": (Keys.ControlF11,),
+    "\x1b[24^": (Keys.ControlF12,),
+    # rxvt-unicode control+shift function keys:
+    "\x1b[25^": (Keys.ControlF13,),
+    "\x1b[26^": (Keys.ControlF14,),
+    "\x1b[28^": (Keys.ControlF15,),
+    "\x1b[29^": (Keys.ControlF16,),
+    "\x1b[31^": (Keys.ControlF17,),
+    "\x1b[32^": (Keys.ControlF18,),
+    "\x1b[33^": (Keys.ControlF19,),
+    "\x1b[34^": (Keys.ControlF20,),
+    "\x1b[23@": (Keys.ControlF21,),
+    "\x1b[24@": (Keys.ControlF22,),
     # --
     # Tmux (Win32 subsystem) sends the following scroll events.
     "\x1b[62~": (Keys.ScrollUp,),
     "\x1b[63~": (Keys.ScrollDown,),
-    "\x1b[200~": (Keys.BracketedPaste,),  # Start of bracketed paste.
-    # --
-    # Sequences generated by numpad 5. Not sure what it means. (It doesn't
-    # appear in 'infocmp'. Just ignore.
-    "\x1b[E": (Keys.Ignore,),  # Xterm.
-    "\x1b[G": (Keys.Ignore,),  # Linux console.
-    # --
     # Meta/control/escape + pageup/pagedown/insert/delete.
     "\x1b[3;2~": (Keys.ShiftDelete,),  # xterm, gnome-terminal.
+    "\x1b[3$": (Keys.ShiftDelete,),  # rxvt
     "\x1b[5;2~": (Keys.ShiftPageUp,),
     "\x1b[6;2~": (Keys.ShiftPageDown,),
     "\x1b[2;3~": (Keys.Escape, Keys.Insert),
@@ -154,8 +197,11 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x1b[5;4~": (Keys.Escape, Keys.ShiftPageUp),
     "\x1b[6;4~": (Keys.Escape, Keys.ShiftPageDown),
     "\x1b[3;5~": (Keys.ControlDelete,),  # xterm, gnome-terminal.
+    "\x1b[3^": (Keys.ControlDelete,),  # rxvt
     "\x1b[5;5~": (Keys.ControlPageUp,),
     "\x1b[6;5~": (Keys.ControlPageDown,),
+    "\x1b[5^": (Keys.ControlPageUp,),  # rxvt
+    "\x1b[6^": (Keys.ControlPageDown,),  # rxvt
     "\x1b[3;6~": (Keys.ControlShiftDelete,),
     "\x1b[5;6~": (Keys.ControlShiftPageUp,),
     "\x1b[6;6~": (Keys.ControlShiftPageDown,),
@@ -191,6 +237,13 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x1b[1;2D": (Keys.ShiftLeft,),
     "\x1b[1;2F": (Keys.ShiftEnd,),
     "\x1b[1;2H": (Keys.ShiftHome,),
+    # Shift+navigation in rxvt
+    "\x1b[a": (Keys.ShiftUp,),
+    "\x1b[b": (Keys.ShiftDown,),
+    "\x1b[c": (Keys.ShiftRight,),
+    "\x1b[d": (Keys.ShiftLeft,),
+    "\x1b[7$": (Keys.ShiftHome,),
+    "\x1b[8$": (Keys.ShiftEnd,),
     # Meta + arrow keys. Several terminals handle this differently.
     # The following sequences are for xterm and gnome-terminal.
     #     (Iterm sends ESC followed by the normal arrow_up/down/left/right
@@ -207,8 +260,8 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x1b[1;3F": (Keys.Escape, Keys.End),
     "\x1b[1;3H": (Keys.Escape, Keys.Home),
     # Alt+shift+number.
-    "\x1b[1;4A": (Keys.Escape, Keys.ShiftDown),
-    "\x1b[1;4B": (Keys.Escape, Keys.ShiftUp),
+    "\x1b[1;4A": (Keys.Escape, Keys.ShiftUp),
+    "\x1b[1;4B": (Keys.Escape, Keys.ShiftDown),
     "\x1b[1;4C": (Keys.Escape, Keys.ShiftRight),
     "\x1b[1;4D": (Keys.Escape, Keys.ShiftLeft),
     "\x1b[1;4F": (Keys.Escape, Keys.ShiftEnd),
@@ -218,8 +271,13 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x1b[1;5B": (Keys.ControlDown,),  # Cursor Mode
     "\x1b[1;5C": (Keys.ControlRight,),  # Cursor Mode
     "\x1b[1;5D": (Keys.ControlLeft,),  # Cursor Mode
+    "\x1bf": (Keys.ControlRight,),  # iTerm natural editing keys
+    "\x1bb": (Keys.ControlLeft,),  # iTerm natural editing keys
     "\x1b[1;5F": (Keys.ControlEnd,),
     "\x1b[1;5H": (Keys.ControlHome,),
+    # rxvt
+    "\x1b[7^": (Keys.ControlEnd,),
+    "\x1b[8^": (Keys.ControlHome,),
     # Tmux sends following keystrokes when control+arrow is pressed, but for
     # Emacs ansi-term sends the same sequences for normal arrow keys. Consider
     # it a normal arrow press, because that's more important.
@@ -227,25 +285,28 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x1b[5B": (Keys.ControlDown,),
     "\x1b[5C": (Keys.ControlRight,),
     "\x1b[5D": (Keys.ControlLeft,),
-    "\x1bOc": (Keys.ControlRight,),  # rxvt
-    "\x1bOd": (Keys.ControlLeft,),  # rxvt
+    # Control arrow keys in rxvt
+    "\x1bOa": (Keys.ControlUp,),
+    "\x1bOb": (Keys.ControlUp,),
+    "\x1bOc": (Keys.ControlRight,),
+    "\x1bOd": (Keys.ControlLeft,),
     # Control + shift + arrows.
-    "\x1b[1;6A": (Keys.ControlShiftDown,),
-    "\x1b[1;6B": (Keys.ControlShiftUp,),
+    "\x1b[1;6A": (Keys.ControlShiftUp,),
+    "\x1b[1;6B": (Keys.ControlShiftDown,),
     "\x1b[1;6C": (Keys.ControlShiftRight,),
     "\x1b[1;6D": (Keys.ControlShiftLeft,),
     "\x1b[1;6F": (Keys.ControlShiftEnd,),
     "\x1b[1;6H": (Keys.ControlShiftHome,),
     # Control + Meta + arrows.
-    "\x1b[1;7A": (Keys.Escape, Keys.ControlDown),
-    "\x1b[1;7B": (Keys.Escape, Keys.ControlUp),
+    "\x1b[1;7A": (Keys.Escape, Keys.ControlUp),
+    "\x1b[1;7B": (Keys.Escape, Keys.ControlDown),
     "\x1b[1;7C": (Keys.Escape, Keys.ControlRight),
     "\x1b[1;7D": (Keys.Escape, Keys.ControlLeft),
     "\x1b[1;7F": (Keys.Escape, Keys.ControlEnd),
     "\x1b[1;7H": (Keys.Escape, Keys.ControlHome),
     # Meta + Shift + arrows.
-    "\x1b[1;8A": (Keys.Escape, Keys.ControlShiftDown),
-    "\x1b[1;8B": (Keys.Escape, Keys.ControlShiftUp),
+    "\x1b[1;8A": (Keys.Escape, Keys.ControlShiftUp),
+    "\x1b[1;8B": (Keys.Escape, Keys.ControlShiftDown),
     "\x1b[1;8C": (Keys.Escape, Keys.ControlShiftRight),
     "\x1b[1;8D": (Keys.Escape, Keys.ControlShiftLeft),
     "\x1b[1;8F": (Keys.Escape, Keys.ControlShiftEnd),
@@ -298,4 +359,79 @@ ANSI_SEQUENCES: Dict[str, Tuple[Keys, ...]] = {
     "\x1b[1;8w": (Keys.Escape, Keys.ControlShift7),
     "\x1b[1;8x": (Keys.Escape, Keys.ControlShift8),
     "\x1b[1;8y": (Keys.Escape, Keys.ControlShift9),
+    # Simplify some sequences that appear to be unique to rxvt; see
+    # https://github.com/Textualize/textual/issues/3741 for context.
+    "\x1bOj": "*",
+    "\x1bOk": "+",
+    "\x1bOm": "-",
+    "\x1bOn": ".",
+    "\x1bOo": "/",
+    "\x1bOp": "0",
+    "\x1bOq": "1",
+    "\x1bOr": "2",
+    "\x1bOs": "3",
+    "\x1bOt": "4",
+    "\x1bOu": "5",
+    "\x1bOv": "6",
+    "\x1bOw": "7",
+    "\x1bOx": "8",
+    "\x1bOy": "9",
+    "\x1bOM": (Keys.Enter,),
+    # WezTerm on macOS emits sequences for Opt and keys on the top numeric
+    # row; whereas other terminals provide various characters. The following
+    # swallow up those sequences and turns them into characters the same as
+    # the other terminals.
+    "\x1b§": "§",
+    "\x1b1": "¡",
+    "\x1b2": "™",
+    "\x1b3": "£",
+    "\x1b4": "¢",
+    "\x1b5": "∞",
+    "\x1b6": "§",
+    "\x1b7": "¶",
+    "\x1b8": "•",
+    "\x1b9": "ª",
+    "\x1b0": "º",
+    "\x1b-": "–",
+    "\x1b=": "≠",
+    # Ctrl+§ on kitty is different from most other terminals on macOS.
+    "\x1b[167;5u": "0",
+    ############################################################################
+    # The ignore section. Only add sequences here if they are going to be
+    # ignored. Also, when adding a sequence here, please include a note as
+    # to why it is being ignored; ideally citing sources if possible.
+    ############################################################################
+    # The following 2 are inherited from prompt toolkit. They relate to a
+    # press of 5 on the numeric keypad, when *not* in number mode.
+    "\x1b[E": IGNORE_SEQUENCE,  # Xterm.
+    "\x1b[G": IGNORE_SEQUENCE,  # Linux console.
+    # Various ctrl+cmd+ keys under Kitty on macOS.
+    "\x1b[3;13~": IGNORE_SEQUENCE,  # ctrl-cmd-del
+    "\x1b[1;13H": IGNORE_SEQUENCE,  # ctrl-cmd-home
+    "\x1b[1;13F": IGNORE_SEQUENCE,  # ctrl-cmd-end
+    "\x1b[5;13~": IGNORE_SEQUENCE,  # ctrl-cmd-pgup
+    "\x1b[6;13~": IGNORE_SEQUENCE,  # ctrl-cmd-pgdn
+    "\x1b[49;13u": IGNORE_SEQUENCE,  # ctrl-cmd-1
+    "\x1b[50;13u": IGNORE_SEQUENCE,  # ctrl-cmd-2
+    "\x1b[51;13u": IGNORE_SEQUENCE,  # ctrl-cmd-3
+    "\x1b[52;13u": IGNORE_SEQUENCE,  # ctrl-cmd-4
+    "\x1b[53;13u": IGNORE_SEQUENCE,  # ctrl-cmd-5
+    "\x1b[54;13u": IGNORE_SEQUENCE,  # ctrl-cmd-6
+    "\x1b[55;13u": IGNORE_SEQUENCE,  # ctrl-cmd-7
+    "\x1b[56;13u": IGNORE_SEQUENCE,  # ctrl-cmd-8
+    "\x1b[57;13u": IGNORE_SEQUENCE,  # ctrl-cmd-9
+    "\x1b[48;13u": IGNORE_SEQUENCE,  # ctrl-cmd-0
+    "\x1b[45;13u": IGNORE_SEQUENCE,  # ctrl-cmd--
+    "\x1b[61;13u": IGNORE_SEQUENCE,  # ctrl-cmd-+
+    "\x1b[91;13u": IGNORE_SEQUENCE,  # ctrl-cmd-[
+    "\x1b[93;13u": IGNORE_SEQUENCE,  # ctrl-cmd-]
+    "\x1b[92;13u": IGNORE_SEQUENCE,  # ctrl-cmd-\
+    "\x1b[39;13u": IGNORE_SEQUENCE,  # ctrl-cmd-'
+    "\x1b[59;13u": IGNORE_SEQUENCE,  # ctrl-cmd-;
+    "\x1b[47;13u": IGNORE_SEQUENCE,  # ctrl-cmd-/
+    "\x1b[46;13u": IGNORE_SEQUENCE,  # ctrl-cmd-.
 }
+
+# https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
+SYNC_START = "\x1b[?2026h"
+SYNC_END = "\x1b[?2026l"

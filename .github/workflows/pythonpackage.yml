@@ -1,49 +1,55 @@
 name: Test Textual module
 
-on: [pull_request]
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/pythonpackage.yml"
+      - "**.py"
+      - "**.pyi"
+      - "**.css"
+      - "**.ambr"
+      - "**.lock"
+      - "Makefile"
+
+env:
+  PYTEST_ADDOPTS: "--color=yes"
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.7", "3.8", "3.9"]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@v4.1.1
+      - name: Install Poetry
+        run: pipx install poetry==1.7.1
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4.7.1
         with:
           python-version: ${{ matrix.python-version }}
-          architecture: x64
-      - name: Install and configure Poetry
-        uses: snok/install-poetry@v1.1.6
-        with:
-          version: 1.1.6
-          virtualenvs-in-project: true
+          cache: "poetry"
       - name: Install dependencies
-        run: poetry install
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-      - name: Format check with black
-        run: |
-          source $VENV
-          make format-check
-#      - name: Typecheck with mypy
-#        run: |
-#          source $VENV
-#          make typecheck
+        run: poetry install --no-interaction --extras syntax
+        if: ${{ matrix.python-version != '3.12' }}
+      - name: Install dependencies for 3.12 # https://github.com/Textualize/textual/issues/3491#issuecomment-1854156476
+        run: poetry install --no-interaction
+        if: ${{ matrix.python-version == '3.12' }}
       - name: Test with pytest
         run: |
-          source $VENV
-          pytest tests -v --cov=./src/textual --cov-report=xml:./coverage.xml --cov-report term-missing
-      - name: Upload code coverage
-        uses: codecov/codecov-action@v1.0.10
+          poetry run pytest tests -v --cov=./src/textual --cov-report=xml:./coverage.xml --cov-report term-missing
+        if: ${{ matrix.python-version != '3.12' }}
+      - name: Test with pytest for 3.12 # https://github.com/Textualize/textual/issues/3491#issuecomment-1854156476
+        run: |
+          poetry run pytest tests -v --cov=./src/textual --cov-report=xml:./coverage.xml --cov-report term-missing -m 'not syntax'
+        if: ${{ matrix.python-version == '3.12' }}
+      - name: Upload snapshot report
+        if: always()
+        uses: actions/upload-artifact@v3
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          file: ./coverage.xml
-          name: rich
-          flags: unittests
-          env_vars: OS,PYTHON
+          name: snapshot-report-textual
+          path: snapshot_report.html

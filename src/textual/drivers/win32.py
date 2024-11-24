@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ctypes
 import msvcrt
 import sys
@@ -5,14 +7,17 @@ import threading
 from asyncio import AbstractEventLoop, run_coroutine_threadsafe
 from ctypes import Structure, Union, byref, wintypes
 from ctypes.wintypes import BOOL, CHAR, DWORD, HANDLE, SHORT, UINT, WCHAR, WORD
-from typing import IO, Callable, List, Optional
+from typing import IO, TYPE_CHECKING, Callable, List, Optional
 
-from .._types import EventTarget
-from .._xterm_parser import XTermParser
-from ..events import Event, Resize
-from ..geometry import Size
+from textual import constants
+from textual._xterm_parser import XTermParser
+from textual.events import Event, Resize
+from textual.geometry import Size
 
-KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+if TYPE_CHECKING:
+    from textual.app import App
+
+KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore
 
 # Console input modes
 ENABLE_ECHO_INPUT = 0x0004
@@ -120,31 +125,31 @@ class INPUT_RECORD(Structure):
     _fields_ = [("EventType", wintypes.WORD), ("Event", InputEvent)]
 
 
-def _set_console_mode(file: IO, mode: int) -> bool:
+def set_console_mode(file: IO, mode: int) -> bool:
     """Set the console mode for a given file (stdout or stdin).
 
     Args:
-        file (IO): A file like object.
-        mode (int): New mode.
+        file: A file like object.
+        mode: New mode.
 
     Returns:
-        bool: True on success, otherwise False.
+        True on success, otherwise False.
     """
-    windows_filehandle = msvcrt.get_osfhandle(file.fileno())
+    windows_filehandle = msvcrt.get_osfhandle(file.fileno())  # type: ignore
     success = KERNEL32.SetConsoleMode(windows_filehandle, mode)
     return success
 
 
-def _get_console_mode(file: IO) -> int:
+def get_console_mode(file: IO) -> int:
     """Get the console mode for a given file (stdout or stdin)
 
     Args:
-        file (IO): A file-like object.
+        file: A file-like object.
 
     Returns:
-        int: The current console mode.
+        The current console mode.
     """
-    windows_filehandle = msvcrt.get_osfhandle(file.fileno())
+    windows_filehandle = msvcrt.get_osfhandle(file.fileno())  # type: ignore
     mode = wintypes.DWORD()
     KERNEL32.GetConsoleMode(windows_filehandle, ctypes.byref(mode))
     return mode.value
@@ -154,28 +159,28 @@ def enable_application_mode() -> Callable[[], None]:
     """Enable application mode.
 
     Returns:
-        Callable[[], None]: A callable that will restore terminal to previous state.
+        A callable that will restore terminal to previous state.
     """
 
-    terminal_in = sys.stdin
-    terminal_out = sys.stdout
+    terminal_in = sys.__stdin__
+    terminal_out = sys.__stdout__
 
-    current_console_mode_in = _get_console_mode(terminal_in)
-    current_console_mode_out = _get_console_mode(terminal_out)
+    current_console_mode_in = get_console_mode(terminal_in)
+    current_console_mode_out = get_console_mode(terminal_out)
 
     def restore() -> None:
         """Restore console mode to previous settings"""
-        _set_console_mode(terminal_in, current_console_mode_in)
-        _set_console_mode(terminal_out, current_console_mode_out)
+        set_console_mode(terminal_in, current_console_mode_in)
+        set_console_mode(terminal_out, current_console_mode_out)
 
-    _set_console_mode(
+    set_console_mode(
         terminal_out, current_console_mode_out | ENABLE_VIRTUAL_TERMINAL_PROCESSING
     )
-    _set_console_mode(terminal_in, ENABLE_VIRTUAL_TERMINAL_INPUT)
+    set_console_mode(terminal_in, ENABLE_VIRTUAL_TERMINAL_INPUT)
     return restore
 
 
-def _wait_for_handles(handles: List[HANDLE], timeout: int = -1) -> Optional[HANDLE]:
+def wait_for_handles(handles: List[HANDLE], timeout: int = -1) -> Optional[HANDLE]:
     """
     Waits for multiple handles. (Similar to 'select') Returns the handle which is ready.
     Returns `None` on timeout.
@@ -210,23 +215,19 @@ class EventMonitor(threading.Thread):
     def __init__(
         self,
         loop: AbstractEventLoop,
-        app,
-        target: EventTarget,
+        app: App,
         exit_event: threading.Event,
         process_event: Callable[[Event], None],
     ) -> None:
         self.loop = loop
         self.app = app
-        self.target = target
         self.exit_event = exit_event
         self.process_event = process_event
-        self.app.log("event monitor constructed")
         super().__init__()
 
     def run(self) -> None:
-        self.app.log("event monitor thread started")
         exit_requested = self.exit_event.is_set
-        parser = XTermParser(self.target, lambda: False)
+        parser = XTermParser(debug=constants.DEBUG)
 
         try:
             read_count = wintypes.DWORD(0)
@@ -243,8 +244,12 @@ class EventMonitor(threading.Thread):
             append_key = keys.append
 
             while not exit_requested():
+
+                for event in parser.tick():
+                    self.process_event(event)
+
                 # Wait for new events
-                if _wait_for_handles([hIn], 200) is None:
+                if wait_for_handles([hIn], 100) is None:
                     # No new events
                     continue
 
@@ -264,7 +269,12 @@ class EventMonitor(threading.Thread):
                         # Key event, store unicode char in keys list
                         key_event = input_record.Event.KeyEvent
                         key = key_event.uChar.UnicodeChar
-                        if key_event.bKeyDown or key == "\x1b":
+                        if key_event.bKeyDown:
+                            if (
+                                key_event.dwControlKeyState
+                                and key_event.wVirtualKeyCode == 0
+                            ):
+                                continue
                             append_key(key)
                     elif event_type == WINDOW_BUFFER_SIZE_EVENT:
                         # Window size changed, store size
@@ -273,17 +283,22 @@ class EventMonitor(threading.Thread):
 
                 if keys:
                     # Process keys
-                    for event in parser.feed("".join(keys)):
+                    #
+                    # https://github.com/Textualize/textual/issues/3178 has
+                    # the context for the encode/decode here.
+                    for event in parser.feed(
+                        "".join(keys).encode("utf-16", "surrogatepass").decode("utf-16")
+                    ):
                         self.process_event(event)
                 if new_size is not None:
                     # Process changed size
                     self.on_size_change(*new_size)
 
         except Exception as error:
-            self.app.log("EVENT MONITOR ERROR", error)
-        self.app.log("event monitor thread finished")
+            self.app.log.error("EVENT MONITOR ERROR", error)
 
     def on_size_change(self, width: int, height: int) -> None:
         """Called when terminal size changes."""
-        event = Resize(self.target, Size(width, height))
-        run_coroutine_threadsafe(self.target.post_message(event), loop=self.loop)
+        size = Size(width, height)
+        event = Resize(size, size)
+        run_coroutine_threadsafe(self.app._post_message(event), loop=self.loop)
